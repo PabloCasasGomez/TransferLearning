@@ -94,6 +94,62 @@ def split_population_individuals(X, train_pct, val_pct_in_train, details = True,
     
     return train_data, val_data, test_data
 
+# En este caso tenemos la division de Train, Val y Test. Pero luego Train se vuelve a dividir en TrainTransfer y ValTransfer
+def split_population_individuals_FOR_TRANSFER(X, train_pct, val_pct_in_train, details = True, random_state=42):
+    train_data_transfer, val_data_transfer, val_data, test_data = [], [], [], []
+
+    # Identificar las poblaciones únicas
+    populations = X["poblacion_encoded"].unique()
+    if details:
+        print("Las poblaciones son: ", populations)
+
+    for pop in populations:
+        if details:
+            print("Se esta procesando la poblacion: ", pop)
+        # Extraer los datos de la población actual
+        pop_data = X[X["poblacion_encoded"] == pop]
+
+        # Identificar los individuos únicos en esta población
+        individuals = pop_data["nametag_encoded"].unique()
+        
+        if details:
+            print("Los individuos de esta poblacion son: ", individuals)
+
+        # Dividir los individuos en train+val y test
+        individuals_train_val, individuals_test = train_test_split(individuals, train_size=train_pct, random_state=random_state)
+
+        # Dividir los individuos de train+val en train y val
+        individuals_train, individuals_val = train_test_split(individuals_train_val, test_size=val_pct_in_train, random_state=random_state)
+
+        # Dividir los individuos de train en trainTransfer y valTransfer
+        individuals_train_transfer, individuals_val_transfer = train_test_split(individuals_train, test_size=val_pct_in_train, random_state=random_state)
+
+        # Agregar los datos correspondientes a los individuos seleccionados
+        for ind in individuals_train_transfer:
+            ind_data = pop_data[pop_data["nametag_encoded"] == ind]
+            train_data_transfer.append(ind_data)
+
+        for ind in individuals_val_transfer:
+            ind_data = pop_data[pop_data["nametag_encoded"] == ind]
+            val_data_transfer.append(ind_data)
+
+        for ind in individuals_val:
+            ind_data = pop_data[pop_data["nametag_encoded"] == ind]
+            val_data.append(ind_data)
+
+        for ind in individuals_test:
+            ind_data = pop_data[pop_data["nametag_encoded"] == ind]
+            test_data.append(ind_data)
+
+    # Convertir listas a arrays
+    train_data_transfer = pd.concat(train_data_transfer)
+    val_data_transfer = pd.concat(val_data_transfer)
+    val_data = pd.concat(val_data)
+    test_data = pd.concat(test_data)
+    
+    return train_data_transfer, val_data_transfer, val_data, test_data
+
+
 def df_to_X_y_ind_3(df, window_size=3):
     X = []
     y = []

@@ -3,3 +3,6 @@ RCPMerged
 *.zip
 best_models_22_10_24
 RCPMergedTransfer
+RCPMergedTransferTotal
+*.keras
+resultsTransferOption2

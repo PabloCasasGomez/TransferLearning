@@ -132,24 +132,26 @@ class LSTMHyperModel(HyperModel):
             **kwargs)
 
 # Definimos la función que se ejecutará en paralelo
-def adjustHyperparameters(archivo, WINDOWS_SIZE=3):
+def adjustHyperparameters_Paralelized(archivo, WINDOWS_SIZE=3):
     
     if "train" in archivo:
-        nombreArchivo = archivo.split("_train")[0]
 
-        data_train = np.load(f'RCPMergedTransfer/{nombreArchivo}_train.npz', allow_pickle=True)
-        data_val = np.load(f'RCPMergedTransfer/{nombreArchivo}_val.npz', allow_pickle=True)
-        data_test = np.load(f'RCPMergedTransfer/{nombreArchivo}_test.npz', allow_pickle=True)
+        nombreArchivo = archivo.split("_train_transfer")[0]
+        print(f"Estamos procesando el archivo {archivo}")
 
-        X_train = data_train['X_train']
-        y_train = data_train['y_train']
-        X_val = data_val['X_val']
-        y_val = data_val['y_val']
-        X_test = data_test['X_test']
-        y_test = data_test['y_test']
+        data_train_global = np.load(f'RCPMergedTransferTotal/{nombreArchivo}_train_transfer.npz', allow_pickle=True)
+        data_val_global = np.load(f'RCPMergedTransferTotal/{nombreArchivo}_val_transfer.npz', allow_pickle=True)
+        data_test_global = np.load(f'RCPMergedTransferTotal/{nombreArchivo}_val.npz', allow_pickle=True)
+
+        X_train = data_train_global['X_train_transfer']
+        y_train = data_train_global['y_train_transfer']
+        X_val = data_val_global['X_val_transfer']
+        y_val = data_val_global['y_val_transfer']
+        X_test = data_test_global['X_val']
+        y_test = data_test_global['y_val']
 
         # Los valores de normalización estan incluidos en todos los archivos (train, val, test) y cada uno de ellos tiene todo el contenido del resto
-        valorNormalizacion = data_train["valorNormalizacion"]
+        valorNormalizacion = data_train_global["valorNormalizacion"]
 
         hypermodel = LSTMHyperModel(input_shape=(WINDOWS_SIZE + 1, X_train.shape[2]), num_lstm_layers_input=3, num_lstm_layers_after_input=3)
 
@@ -245,9 +247,9 @@ if __name__ == "__main__":
     # Importamos la libreria de multiparalelización
     import multiprocessing as mp
 
-    archivos = [archivo for archivo in os.listdir("RCPMergedTransfer") if "train" in archivo]
+    archivos = [archivo for archivo in os.listdir("RCPMergedTransferTotal")]
 
     # Crear un grupo de procesos
     print(f"VAMOS A EJECUTAR EL PROCESO CON {mp.cpu_count()} NUCLEOS")
     with mp.Pool(processes=mp.cpu_count()) as pool:
-        pool.map(adjustHyperparameters, archivos)
+        pool.map(adjustHyperparameters_Paralelized, archivos)
