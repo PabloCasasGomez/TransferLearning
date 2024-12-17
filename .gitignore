@@ -7,3 +7,7 @@ RCPMergedTransferTotal
 *.keras
 resultsTransferOption2
 best_models_parallel_option3
+*.h5
+*.json
+*.csv
+*.npz

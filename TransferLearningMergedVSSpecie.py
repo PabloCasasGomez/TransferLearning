@@ -42,65 +42,96 @@ from keras_tuner.tuners import Hyperband
 from funcionesComunes import *
 
 
-class LSTMHyperModel(HyperModel):
-    
-    def __init__(self, input_shape, num_lstm_layers_input=3, num_lstm_layers_after_input=3):
-        self.input_shape = input_shape
-        self.num_lstm_layers_input = num_lstm_layers_input
-        self.num_lstm_layers_after_input = num_lstm_layers_after_input
-    
+class TCNNModel(HyperModel):
+
+    def __init__(self, input_shape, num_tcnn_layers_input=3, num_tcnn_layers_after_input=3):
+        self.input_shape = input_shape # (SEQ_LENGTH, num_features)
+        self.num_tcnn_layers_input = num_tcnn_layers_input
+        self.num_tcnn_layers_after_input = num_tcnn_layers_after_input
+
+        # Para controlar las dimensiones temporales
+        self.temporalDimension = self.input_shape[0]
+
     def build(self, hp):
         
         # Podemos ver como "hp.Int" permite ir modificando los parámetros del modelo con INT
         # Con "hp.Float" lo hace pero para valores decimales 
-        # IMPORTANTE!!! Nunca se devuelve el return_sequences si la LSTM es la última capa
-        # IMPORTANTE!!! Si estamos aplicando capas LSTM despues Dropout y luego LSTM de nuevo, debemos de poner en todas las primeras capas LSTM return_sequences=True !!!IMPORTANTE
+        # IMPORTANTE!!! Tenemos que controlar las dimensionalidad temporal teniendo en cuenta la reducción que se hace en kernel y Pooling
         
         model = Sequential()
         
-        # Número de capas LSTM
-        num_lstm_layers = hp.Int('num_lstm_layers', min_value=1, max_value=self.num_lstm_layers_input, default = self.num_lstm_layers_input)
+        # Numero de capas de TCNN
+        num_tcnn_layers_input = hp.Int("num_tcnn_layers_input", min_value = 1, 
+                                       max_value = self.num_tcnn_layers_input, default = self.num_tcnn_layers_input)
 
-        # Seleccionamos el batch_size usado
-        self.batch_size=hp.Choice("batch_size", [16, 24, 32])
+        for i in range(num_tcnn_layers_input):
 
-        for i in range(num_lstm_layers):
-            # Añadiendo capas LSTM
+            # Añadiendo capas TCNN
             # Solo la primera capa necesita input_shape
+
             if i == 0:
-                
-                # Se tiene una capa LSTM que empieza con 32 unidades y va aumentando de 32 en 32 hasta 128
-                model.add(LSTM(units=hp.Int(f'units_lstm_{i}', min_value=32, max_value=128, step=32),
-                               input_shape=self.input_shape,
-                               return_sequences=True,  # True si hay más de una capa LSTM
-                               use_bias=True))
+                    
+                # Primera capa de convolución con padding 'same'
+                model.add(layers.Conv1D(filters=hp.Int(f'units_tcnn_{i}', min_value=32, max_value=128, step=32),
+                                        kernel_size=3, activation='relu', 
+                                        padding='same', input_shape=self.input_shape)) # Dimensión temporal despues de la convolución: 4 (3+1) (USAMOS PADDING 'SAME')
+                model.add(layers.BatchNormalization())
+                model.add(layers.MaxPooling1D(pool_size=2)) # Reducción de la dimensión temporal a la mitad: 4/2=2 (REDONDEA HACIA ABAJO)
+
+                # Obtenemos el redondeo hacia abajo
+                self.temporalDimension = math.floor(self.temporalDimension / 2)
+    
             else:
-                model.add(LSTM(units=hp.Int(f'units_lstm_{i}', min_value=32, max_value=128, step=32),
-                               return_sequences=True,  # True para todas excepto la última capa LSTM
-                               use_bias=True))
-        
+
+                # Segunda capa de convolución con padding 'same'
+                model.add(layers.Conv1D(filters=hp.Int(f'units_tcnn_{i}', min_value=32, max_value=128, step=32),
+                                        kernel_size=3, activation='relu', 
+                                        padding='same')) # Dimensión temporal despues de la convolución: 2 (USAMOS PADDING 'SAME')
+                model.add(layers.BatchNormalization())
+
+                if self.temporalDimension >= 2:
+                    model.add(layers.MaxPooling1D(pool_size=1)) # Reducción de la dimensión temporal a la mitad: 2/2=1 (REDONDEA HACIA ABAJO)
+                    self.temporalDimension = math.floor(self.temporalDimension / 2)
+                else:
+                    model.add(layers.MaxPooling1D(pool_size=1)) # Reducción de la dimensión temporal a la mitad: 2/1=2 (REDONDEA HACIA ABAJO)
+
         # Se modifica la capa Dropout desde 0.0 hasta 0.5 con un step de 0.05
         model.add(Dropout(hp.Float('dropout', min_value=0.0, max_value=0.5, default=0.25, step=0.05)))
         
-        # Creamos un bucle que permite incrementar las capas LSTM destras de la capa Dropout
-        num_lstm_layers_after = hp.Int('num_lstm_layers_after', min_value=1, max_value=self.num_lstm_layers_after_input, default = self.num_lstm_layers_after_input)
-        
-        for i in range(num_lstm_layers_after):
-            # Añadiendo capas LSTM después de Dropout
-            model.add(LSTM(units=hp.Int(f'units_lstm_after_{i}', min_value=32, max_value=128, step=32),
-                           return_sequences=(i < num_lstm_layers_after - 1),  # True para todas excepto la última capa LSTM
-                           use_bias=True))
-        
-        # Capa dense que empieza con 4 unidades y va aumentando de 4 en 4 hasta 64
-        model.add(Dense(hp.Int('dense_units', min_value=4, max_value=64, step=4), activation=hp.Choice('dense_activation',values=['relu', 'sigmoid', 'tanh', 'elu', 'relu'],default='relu'), use_bias=True))
-        
-        # Se modifica la capa Dropout desde 0.0 hasta 0.5 con un step de 0.05
-        model.add(Dropout(hp.Float('dropout_2', min_value=0.0, max_value=0.5, default=0.25, step=0.05)))
+        # Creamos un bucle que permite incrementar las capas TCNN destras de la capa Dropout
+        num_tcnn_layers_after_input = hp.Int("num_tcnn_layers_after_input", min_value = 1, 
+                                       max_value = self.num_tcnn_layers_after_input, default = self.num_tcnn_layers_after_input)
 
-        model.add(Dense(1, activation=hp.Choice('dense_activation',values=['relu', 'sigmoid', 'tanh', 'elu', 'relu'],default='relu'), use_bias=True))
+        for i in range(num_tcnn_layers_input):
+
+            # Segunda capa de convolución con padding 'same'
+            model.add(layers.Conv1D(filters=hp.Int(f'units_tcnn_{i}', min_value=32, max_value=128, step=32),
+                                    kernel_size=3, activation='relu',
+                                    padding='same')) # USAMOS PADDING 'SAME'
+            model.add(layers.BatchNormalization())
+
+            if self.temporalDimension >= 2:
+                model.add(layers.MaxPooling1D(pool_size=2)) # REDONDEA HACIA ABAJO
+                self.temporalDimension = math.floor(self.temporalDimension / 2)
+            else:
+                model.add(layers.MaxPooling1D(pool_size=1)) # REDONDEA HACIA ABAJO
+
+        # Capa final de convolución con padding 'same'
+        model.add(layers.Conv1D(filters=hp.Int(f'units_tcnn_{i}', min_value=32, max_value=128, step=32),
+                                kernel_size=3, activation='relu', padding='same')) # Dimensión temporal despues de la convolución: 1 (USAMOS PADDING 'SAME')	
+        model.add(layers.BatchNormalization())
+        model.add(layers.GlobalAveragePooling1D()) # Promedio global de la dimensión temporal
+    
+        # Capa densa
+        model.add(layers.Dense(hp.Int('dense_units', min_value=4, max_value=64, step=4), 
+                               activation=hp.Choice('dense_activation',values=['relu', 'sigmoid', 'tanh', 'elu', 'relu'])))
+        
+        # Capa de salida
+        model.add(layers.Dense(1, activation=hp.Choice('dense_activation',values=['relu', 'sigmoid', 'tanh', 'elu', 'relu'],default='relu')))
         
         # Variaciones de los optimizadores
         optimizer = hp.Choice('optimizer', ['adam', 'sgd', 'rmsprop'])
+        
         if optimizer == 'adam':
             opt = Adam(
                 learning_rate=hp.Float('learning_rate', min_value=1e-4, max_value=1e-2, sampling='LOG')
@@ -116,21 +147,17 @@ class LSTMHyperModel(HyperModel):
         
         
         model.compile(optimizer=opt,
-                      loss=MeanSquaredError(),
-                      metrics=[
-                        MeanSquaredError(name='mse'),
-                        RootMeanSquaredError(name='rmse'),
-                        MeanAbsolutePercentageError(name='mape')
-                        ]
-                    )
-        
+                        loss=MeanSquaredError(),
+                        metrics=[RootMeanSquaredError()])
+            
         return model
-    
+
     def fit(self, hp, model, *args, **kwargs):
         return model.fit(*args,
-            batch_size = self.batch_size,
+            batch_size=hp.Choice("batch_size", [16, 24, 32]),
             **kwargs)
-
+        
+    
 # Definimos la función que se ejecutará en paralelo
 def adjustHyperparameters(archivo, WINDOWS_SIZE=3):
     
@@ -149,16 +176,16 @@ def adjustHyperparameters(archivo, WINDOWS_SIZE=3):
         y_test = data_test['y_test']
 
         # Los valores de normalización estan incluidos en todos los archivos (train, val, test) y cada uno de ellos tiene todo el contenido del resto
-        valorNormalizacion = data_train["valorNormalizacion"]
+        valorNormalizacion = data_train["valorNormalizacion"].item()
 
-        hypermodel = LSTMHyperModel(input_shape=(WINDOWS_SIZE + 1, X_train.shape[2]), num_lstm_layers_input=3, num_lstm_layers_after_input=3)
+        hypermodel = TCNNModel(input_shape=(WINDOWS_SIZE + 1, X_train.shape[2]), num_tcnn_layers_input=3, num_tcnn_layers_after_input=3)
 
         tuner = Hyperband(
             hypermodel,
             objective='val_loss',
             max_epochs=50,
             factor=3,
-            directory='best_models_22_10_24/LSTM',
+            directory='best_models_26_11_24/TCNN',
             project_name=f'hyperparameter_tuning_{nombreArchivo}'
         )
 
@@ -174,7 +201,7 @@ def adjustHyperparameters(archivo, WINDOWS_SIZE=3):
             model.load_weights(tuner.get_trial_dir(trial.trial_id) + "/checkpoint.weights.h5")
             
             # Guardamos el modelo
-            model.save(f"models/LSTMMerged_22_10_24/{os.path.splitext(nombreArchivo)[0]}_model_{i+1}.keras")
+            model.save(f"models/TCNNMerged_Option2/{os.path.splitext(nombreArchivo)[0]}_model_{i+1}.keras")
 
             # Entrenamiento
             predictions_train = predictionForIndividuals(X_train, y_train, model, hyperparameters["batch_size"])
@@ -235,7 +262,7 @@ def adjustHyperparameters(archivo, WINDOWS_SIZE=3):
             model_info.update(hyperparameters)
             top_models_data.append(model_info)
 
-        with open(f"models/LSTMMerged_22_10_24/{nombreArchivo}_best_models.json", 'w') as file:
+        with open(f"models/TCNNMerged_Option2/{nombreArchivo}_best_models.json", 'w') as file:
             json.dump(top_models_data, file, indent=4)
 
 
